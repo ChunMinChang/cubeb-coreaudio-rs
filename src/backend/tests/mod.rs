@@ -7,6 +7,7 @@ mod device_change;
 mod device_property;
 mod interfaces;
 mod manual;
+mod multi_devices;
 mod parallel;
 mod tone;
 mod utils;

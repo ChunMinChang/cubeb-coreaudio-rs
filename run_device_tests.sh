@@ -38,3 +38,11 @@ cargo test test_reinit_duplex_stream_by_unplugging_a_default_input_device -- --i
 # FIXIT: The following test will hang since we don't monitor the alive status of the output device
 # cargo test test_reinit_duplex_stream_by_unplugging_a_nondefault_output_device -- --ignored --nocapture
 cargo test test_reinit_duplex_stream_by_unplugging_a_default_output_device -- --ignored --nocapture
+
+# Run theses tests individually to avoid choosing the processwide-private created aggregate device
+# FIXIT: Shouldn't the aggregate device is fully removed once the stream is dropped?
+cargo test test_create_one_duplex_and_one_input_with_three_different_devices -- --ignored --nocapture
+cargo test test_create_one_duplex_and_one_input_with_duplex_on_one_input_on_another -- --ignored --nocapture
+cargo test test_create_one_duplex_and_one_input_with_same_input_device_but_different_output -- --ignored --nocapture
+cargo test test_create_one_duplex_and_one_input_with_same_output_device_but_different_input -- --ignored --nocapture
+cargo test test_create_one_duplex_and_one_input_same_device -- --ignored --nocapture
