@@ -76,6 +76,28 @@ We implement APIs simulating plugging or unplugging a device
 by adding or removing an aggregate device programmatically.
 It's used to verify our callbacks for minitoring the system devices work.
 
+### CoreAudio Behavior Tests
+
+Tests for investigating and documenting low-level CoreAudio API behaviors.
+These serve as executable documentation for behaviors that are undocumented or poorly documented by Apple.
+
+```sh
+# Run all behavior tests
+cargo test behaviors -- --ignored --nocapture
+
+# Run property listener behavior tests
+cargo test behaviors::property_listener -- --ignored --nocapture
+```
+
+**Property listener tests** (`behaviors::property_listener`):
+- `test_audio_object_remove_property_listener_sync` - Tests whether `AudioObjectRemovePropertyListener` waits for in-flight callbacks
+- `test_audio_object_listener_post_removal_callbacks` - Tests if callbacks can fire after removal returns
+- `test_audio_object_listener_destroy_simulation` - Simulates destroy() pattern to detect UAF
+- `test_audio_object_listener_rapid_add_remove_stress` - Stress test with rapid add/remove cycles
+- `test_listener_remains_after_failed_unregistration` - Tests failed unregistration scenario
+- `test_callback_behavior_with_dead_device` - Tests callback behavior when device is removed
+- `test_multiple_property_listeners_thread_serialization` - Tests if callbacks for different properties run on same thread
+
 ### Manual Test
 
 - Output devices switching

@@ -102,3 +102,11 @@ sh run_device_tests.sh "${CARGO_TEST_FLAGS}"
 # cargo test test_switch_output_device ${CARGO_TEST_FLAGS} -- --ignored --nocapture
 # cargo test test_device_collection_change ${CARGO_TEST_FLAGS} -- --ignored --nocapture
 # cargo test test_stream_tester ${CARGO_TEST_FLAGS} -- --ignored --nocapture
+
+# CoreAudio Behavior Tests (for investigating low-level CoreAudio API behaviors)
+# All behavior tests:
+# cargo test behaviors ${CARGO_TEST_FLAGS} -- --ignored --nocapture
+# AudioUnit callback synchronization:
+# cargo test behaviors::audiounit ${CARGO_TEST_FLAGS} -- --ignored --nocapture
+# Property listener synchronization:
+# cargo test behaviors::property_listener ${CARGO_TEST_FLAGS} -- --ignored --nocapture

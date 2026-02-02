@@ -3,6 +3,7 @@ use super::*;
 mod aggregate_device;
 mod api;
 mod backlog;
+mod behaviors;
 mod device_change;
 mod device_property;
 mod interfaces;
