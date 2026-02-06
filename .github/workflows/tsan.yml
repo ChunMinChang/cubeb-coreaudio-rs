@@ -1,0 +1,56 @@
+name: ThreadSanitizer (Maintainer)
+
+# This workflow runs ThreadSanitizer tests which may reveal security-sensitive
+# race conditions. It runs:
+# 1. On PRs when a maintainer adds the 'run-tsan' label
+# 2. On pushes to the main branch (post-merge verification)
+# 3. Manually via workflow_dispatch
+
+on:
+  pull_request:
+    types: [labeled]
+  push:
+    branches:
+      - trailblazer
+  workflow_dispatch:
+
+jobs:
+  tsan:
+    # Only run on PRs if the 'run-tsan' label is present
+    # Always run on push to main branch or manual dispatch
+    if: |
+      (github.event_name == 'pull_request' && github.event.label.name == 'run-tsan') ||
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch'
+
+    runs-on: macos-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install Rust Nightly
+      run: rustup toolchain install nightly --profile minimal --component rust-src
+
+    - name: Setup Rust
+      run: |
+        rustup default nightly
+        toolchain=$(rustup default)
+        echo "Use Rust toolchain: $toolchain"
+        rustc --version
+        cargo --version
+
+    - name: Setup switchaudio
+      run: |
+        brew install switchaudio-osx
+
+    - name: Setup blackhole-2ch
+      run: |
+        brew install blackhole-2ch
+        sudo killall -9 coreaudiod
+        SwitchAudioSource -s "BlackHole 2ch" -t input
+        SwitchAudioSource -s "BlackHole 2ch" -t output
+
+    - name: Run ThreadSanitizer
+      run: sh run_sanitizers.sh thread
