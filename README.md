@@ -85,9 +85,18 @@ These serve as executable documentation for behaviors that are undocumented or p
 # Run all behavior tests
 cargo test behaviors -- --ignored --nocapture
 
-# Run property listener behavior tests
+# Run AudioUnit behavior tests only
+cargo test behaviors::audiounit -- --ignored --nocapture
+
+# Run property listener behavior tests only
 cargo test behaviors::property_listener -- --ignored --nocapture
 ```
+
+**AudioUnit tests** (`behaviors::audiounit`):
+- `test_default_output_stop_sync_raw` - Tests whether `AudioOutputUnitStop()` waits for in-flight callbacks (raw API)
+- `test_vpio_stop_sync_raw` - Tests VoiceProcessingIO callback threading and synchronization (raw API)
+- `test_default_output_stop_sync_wrapped` - Same as above but using crate's wrapper APIs
+- `test_vpio_stop_sync_wrapped` - Same as above but using crate's wrapper APIs
 
 **Property listener tests** (`behaviors::property_listener`):
 - `test_audio_object_remove_property_listener_sync` - Tests whether `AudioObjectRemovePropertyListener` waits for in-flight callbacks

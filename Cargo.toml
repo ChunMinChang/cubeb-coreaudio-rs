@@ -26,6 +26,7 @@ itertools = "0.11"
 
 [features]
 audio-dump = []
+tsan-annotations = []
 vpio-forcelist = []
 gecko-in-tree = ["cubeb-backend/gecko-in-tree"]
 
