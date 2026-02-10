@@ -42,12 +42,28 @@ do
     # See: https://github.com/rust-lang/rust/issues/146465
     if [[ "${san}" == "thread" ]]; then
         export RUSTFLAGS="${RUSTFLAGS} -Cunsafe-allow-abi-mismatch=sanitizer"
+        # Apply TSan annotations to teach TSan about CoreAudio's internal
+        # AudioOutputUnitStop synchronization that it cannot observe.
+        if [[ -f tsan-annotations.patch ]]; then
+            echo "Applying tsan-annotations.patch..."
+            git apply tsan-annotations.patch
+            tsan_patch_applied=1
+        fi
     fi
     export CARGO_HOST_RUSTFLAGS=""
     # Set SANITIZER_BUILD so run_tests.sh can detect sanitizer mode.
     export SANITIZER_BUILD=1
     cargo_test_flags="-Z build-std --target ${TARGET}"
+    if [[ "${tsan_patch_applied:-0}" == "1" ]]; then
+        cargo_test_flags="${cargo_test_flags} --features tsan-annotations"
+    fi
     sh run_tests.sh "${cargo_test_flags}"
+    # Revert TSan annotations patch to keep the tree clean.
+    if [[ "${tsan_patch_applied:-0}" == "1" ]]; then
+        echo "Reverting tsan-annotations.patch..."
+        git apply -R tsan-annotations.patch
+        tsan_patch_applied=0
+    fi
     unset RUSTFLAGS
     unset CARGO_HOST_RUSTFLAGS
     unset SANITIZER_BUILD

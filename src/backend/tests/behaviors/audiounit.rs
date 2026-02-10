@@ -2411,3 +2411,229 @@ fn test_vpio_set_params_after_start_stop_sync() {
 
     println!("\n=== Test Complete ===\n");
 }
+
+/// Verifies that `__tsan_release`/`__tsan_acquire` annotations can teach TSan
+/// about CoreAudio's implicit `AudioOutputUnitStop` synchronization.
+///
+/// Under TSan: callbacks write non-atomic shared data, then `__tsan_release`.
+/// After stop returns: `__tsan_acquire`, then read the shared data.
+/// Without annotations, TSan would flag this as a data race.
+/// With annotations, TSan sees the happens-before edge and stays silent.
+///
+/// Without TSan, the annotations are no-ops and the test still passes.
+#[ignore]
+#[test]
+fn test_vpio_tsan_annotations_verify() {
+    use std::cell::UnsafeCell;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    struct TsanTestState {
+        // Non-atomic shared data, deliberately unprotected.
+        // Written by callback thread, read by main thread after stop.
+        shared_data: UnsafeCell<u64>,
+        callback_ran: AtomicBool,
+        // AudioUnit handle, used as the TSan annotation token (mirrors production).
+        unit: AudioUnit,
+    }
+
+    unsafe impl Sync for TsanTestState {}
+
+    extern "C" fn output_callback(
+        user_data: *mut c_void,
+        _flags: *mut AudioUnitRenderActionFlags,
+        _timestamp: *const AudioTimeStamp,
+        _bus: u32,
+        _frames: u32,
+        buffer_list: *mut AudioBufferList,
+    ) -> OSStatus {
+        let state = unsafe { &*(user_data as *const TsanTestState) };
+
+        if !state.callback_ran.swap(true, Ordering::SeqCst) {
+            unsafe {
+                *state.shared_data.get() = 0xDEAD_BEEF_CAFE_BABE;
+            }
+        }
+
+        if !buffer_list.is_null() {
+            let buffers = unsafe { &mut *buffer_list };
+            if buffers.mNumberBuffers > 0 {
+                let buffer = unsafe { &mut *(&mut buffers.mBuffers as *mut _ as *mut AudioBuffer) };
+                if !buffer.mData.is_null() && buffer.mDataByteSize > 0 {
+                    unsafe {
+                        ptr::write_bytes(buffer.mData as *mut u8, 0, buffer.mDataByteSize as usize);
+                    }
+                }
+            }
+        }
+
+        #[cfg(feature = "tsan-annotations")]
+        {
+            extern "C" {
+                fn __tsan_release(addr: *mut c_void);
+            }
+            unsafe {
+                __tsan_release(state.unit as *mut c_void);
+            }
+        }
+
+        NO_ERR
+    }
+
+    println!("\n=== VPIO TSan Annotations Verify Test ===\n");
+
+    #[cfg(not(feature = "tsan-annotations"))]
+    {
+        println!("NOTE: Not running under TSan. Annotations are no-ops.");
+        println!("Run with TSan to verify annotations silence race reports:");
+        println!("  RUSTFLAGS=\"-Zsanitizer=thread -Cunsafe-allow-abi-mismatch=sanitizer\" \\");
+        println!("  cargo test -Z build-std --target $(rustc -vV | grep host | cut -d' ' -f2) \\");
+        println!("  -p cubeb-coreaudio test_vpio_tsan_annotations -- --ignored --nocapture\n");
+    }
+
+    let state = Box::new(TsanTestState {
+        shared_data: UnsafeCell::new(0),
+        callback_ran: AtomicBool::new(false),
+        unit: ptr::null_mut(),
+    });
+    let state_ptr = Box::into_raw(state);
+
+    let queue = Queue::new_with_target("test_tsan_verify", get_serial_queue_singleton());
+    let mut shared_vpio_mgr = SharedVoiceProcessingUnitManager::new(queue.clone());
+
+    let in_device = match run_serially(|| get_default_device(DeviceType::INPUT)) {
+        Some(id) => device_info {
+            id,
+            flags: device_flags::DEV_INPUT,
+        },
+        None => {
+            println!("No input device. Skipping.");
+            unsafe { drop(Box::from_raw(state_ptr)) };
+            return;
+        }
+    };
+
+    let out_device = match run_serially(|| get_default_device(DeviceType::OUTPUT)) {
+        Some(id) => device_info {
+            id,
+            flags: device_flags::DEV_OUTPUT,
+        },
+        None => {
+            println!("No output device. Skipping.");
+            unsafe { drop(Box::from_raw(state_ptr)) };
+            return;
+        }
+    };
+
+    let vpio_handle = match run_serially(|| {
+        get_voiceprocessing_audiounit(&mut shared_vpio_mgr, &in_device, &out_device)
+    }) {
+        Ok(h) => h,
+        Err(_) => {
+            println!("Could not create VPIO. Skipping.");
+            unsafe { drop(Box::from_raw(state_ptr)) };
+            return;
+        }
+    };
+
+    let unit = vpio_handle.as_ref().unit;
+    unsafe {
+        (*state_ptr).unit = unit;
+    }
+
+    let output_cb = AURenderCallbackStruct {
+        inputProc: Some(output_callback),
+        inputProcRefCon: state_ptr as *mut c_void,
+    };
+    let status = run_serially(|| {
+        audio_unit_set_property(
+            unit,
+            kAudioUnitProperty_SetRenderCallback,
+            kAudioUnitScope_Global,
+            AU_OUT_BUS,
+            &output_cb,
+            mem::size_of_val(&output_cb),
+        )
+    });
+    if status != NO_ERR {
+        println!("Could not set callback (status={}). Skipping.", status);
+        unsafe { drop(Box::from_raw(state_ptr)) };
+        return;
+    }
+
+    let status = run_serially(|| audio_unit_initialize(unit));
+    if status != NO_ERR {
+        println!("Could not initialize (status={}). Skipping.", status);
+        unsafe { drop(Box::from_raw(state_ptr)) };
+        return;
+    }
+
+    let result = run_serially(|| start_audiounit(unit));
+    if result.is_err() {
+        println!("Could not start (result={:?}). Skipping.", result);
+        run_serially(|| audio_unit_uninitialize(unit));
+        unsafe { drop(Box::from_raw(state_ptr)) };
+        return;
+    }
+
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(5) {
+        if unsafe { (*state_ptr).callback_ran.load(Ordering::SeqCst) } {
+            break;
+        }
+        thread::sleep(Duration::from_micros(100));
+    }
+
+    if !unsafe { (*state_ptr).callback_ran.load(Ordering::SeqCst) } {
+        println!("TIMEOUT: No callback triggered. Inconclusive.");
+        run_serially(|| {
+            let _ = stop_audiounit(unit);
+            audio_unit_uninitialize(unit);
+        });
+        run_serially(move || drop(vpio_handle));
+        drop(shared_vpio_mgr);
+        unsafe { drop(Box::from_raw(state_ptr)) };
+        return;
+    }
+
+    let result = run_serially(|| stop_audiounit(unit));
+    println!("stop_audiounit returned: {:?}", result);
+
+    // Acquire on the AudioUnit handle to pair with the callback's release,
+    // mirroring the production annotation in stop_audiounit().
+    #[cfg(feature = "tsan-annotations")]
+    {
+        extern "C" {
+            fn __tsan_acquire(addr: *mut c_void);
+        }
+        unsafe {
+            __tsan_acquire(unit as *mut c_void);
+        }
+    }
+
+    // Read non-atomic shared data after stop. Without TSan annotations, TSan would
+    // flag this as a race with the callback's write. With the release-in-callback →
+    // acquire-after-stop chain, TSan sees the happens-before edge.
+    let value = unsafe { *(*state_ptr).shared_data.get() };
+    println!("Shared data after stop: 0x{:X}", value);
+    assert_eq!(
+        value, 0xDEAD_BEEF_CAFE_BABE,
+        "Callback should have written this value"
+    );
+
+    println!("RESULT: Successfully read callback-written data after stop.");
+    #[cfg(feature = "tsan-annotations")]
+    println!("TSan annotations active. If no warnings above, annotations are correct.");
+    #[cfg(not(feature = "tsan-annotations"))]
+    println!("TSan not active. Re-run under TSan to verify.");
+
+    run_serially(move || {
+        audio_unit_uninitialize(unit);
+        drop(vpio_handle);
+    });
+    drop(shared_vpio_mgr);
+    unsafe { drop(Box::from_raw(state_ptr)) };
+
+    println!("\n=== Test Complete ===\n");
+}
