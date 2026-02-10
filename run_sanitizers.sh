@@ -42,27 +42,37 @@ do
     # See: https://github.com/rust-lang/rust/issues/146465
     if [[ "${san}" == "thread" ]]; then
         export RUSTFLAGS="${RUSTFLAGS} -Cunsafe-allow-abi-mismatch=sanitizer"
-        # Apply TSan annotations to teach TSan about CoreAudio's internal
-        # AudioOutputUnitStop synchronization that it cannot observe.
-        if [[ -f tsan-annotations.patch ]]; then
-            echo "Applying tsan-annotations.patch..."
-            git apply tsan-annotations.patch
-            tsan_patch_applied=1
-        fi
+        # TSan false-positive tests: these trigger races in CoreAudio's
+        # internal synchronization that TSan cannot observe. They are
+        # skipped in pass 1 and re-run with annotations in pass 2.
+        tsan_false_positive_tests=(
+            "test_ops_duplex_voice_stream_set_input_processing_params"
+        )
+        tsan_skip_flags=""
+        for t in "${tsan_false_positive_tests[@]}"; do
+            tsan_skip_flags="${tsan_skip_flags} --skip ${t}"
+        done
+        export TSAN_SKIP_FLAGS="${tsan_skip_flags}"
     fi
     export CARGO_HOST_RUSTFLAGS=""
     # Set SANITIZER_BUILD so run_tests.sh can detect sanitizer mode.
     export SANITIZER_BUILD=1
     cargo_test_flags="-Z build-std --target ${TARGET}"
-    if [[ "${tsan_patch_applied:-0}" == "1" ]]; then
-        cargo_test_flags="${cargo_test_flags} --features tsan-annotations"
-    fi
+    # Pass 1: Run all tests (TSan false-positive tests are skipped via
+    # TSAN_SKIP_FLAGS, picked up by run_tests.sh).
     sh run_tests.sh "${cargo_test_flags}"
-    # Revert TSan annotations patch to keep the tree clean.
-    if [[ "${tsan_patch_applied:-0}" == "1" ]]; then
-        echo "Reverting tsan-annotations.patch..."
+    # Pass 2 (TSan only): Apply annotations patch and re-run only the
+    # false-positive tests with TSan annotations enabled.
+    if [[ "${san}" == "thread" ]] && [[ -f tsan-annotations.patch ]]; then
+        echo "\n\nRe-running TSan false-positive tests with annotations\n------------------------------"
+        git apply tsan-annotations.patch
+        cargo_test_flags_annotated="${cargo_test_flags} --features tsan-annotations"
+        for t in "${tsan_false_positive_tests[@]}"; do
+            echo "Running ${t} with tsan-annotations..."
+            cargo test --verbose --lib --tests ${cargo_test_flags_annotated} -- ${t}
+        done
         git apply -R tsan-annotations.patch
-        tsan_patch_applied=0
+        unset TSAN_SKIP_FLAGS
     fi
     unset RUSTFLAGS
     unset CARGO_HOST_RUSTFLAGS
