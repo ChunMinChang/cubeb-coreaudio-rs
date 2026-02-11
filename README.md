@@ -107,6 +107,24 @@ cargo test behaviors::property_listener -- --ignored --nocapture
 - `test_callback_behavior_with_dead_device` - Tests callback behavior when device is removed
 - `test_multiple_property_listeners_thread_serialization` - Tests if callbacks for different properties run on same thread
 
+### HALB_Mutex Tracing
+
+`trace_mutex.sh` traces CoreAudio's internal `HALB_Mutex` lock/unlock activity around synchronization operations using LLDB. Works with any test in the crate.
+
+```sh
+# Run a trace (output saved to trace-<test>-<timestamp>.log)
+./trace_mutex.sh test_vpio_stop_sync_raw
+./trace_mutex.sh test_ops_duplex_voice_stream_set_input_processing_params
+
+# Re-analyze a saved log
+./trace_mutex.sh --analyze trace-test_vpio_stop_sync_raw-20250209-143021.log
+
+# Or directly with Python
+python3 trace_mutex.py trace-test_vpio_stop_sync_raw-20250209-143021.log
+```
+
+The analysis identifies mutex instances shared between callback threads and sync threads (e.g., `AudioOutputUnitStop`, `AudioObjectRemovePropertyListener`), showing contention timelines and mutex handoff evidence.
+
 ### Manual Test
 
 - Output devices switching
