@@ -109,15 +109,18 @@ def on_sync_enter(frame, bp_loc, dict):
     _record(frame, f"{fn} ENTER")
     _inside_sync[tid] = fn
 
+    # Set return breakpoint to capture sync op duration
+    caller = frame.GetThread().GetFrameAtIndex(1)
+    if caller and caller.GetPC() != 0:
+        target = frame.GetThread().GetProcess().GetTarget()
+        bp_ret = target.BreakpointCreateByAddress(caller.GetPC())
+        bp_ret.SetOneShot(True)
+        bp_ret.SetScriptCallbackFunction("trace_mutex.on_sync_return")
+
+    # Enable pthread fallback tracing during sync ops
     if not _halb_available and _bp_pthread_lock is not None:
         _bp_pthread_lock.SetEnabled(True)
         _bp_pthread_unlock.SetEnabled(True)
-        caller = frame.GetThread().GetFrameAtIndex(1)
-        if caller and caller.GetPC() != 0:
-            target = frame.GetThread().GetProcess().GetTarget()
-            bp_ret = target.BreakpointCreateByAddress(caller.GetPC())
-            bp_ret.SetOneShot(True)
-            bp_ret.SetScriptCallbackFunction("trace_mutex.on_sync_return")
 
     return False
 
@@ -377,13 +380,80 @@ def analyze(events, halb_available=True):
                                 lines.append(f"    Mutex {addr}: T{tid1} Unlock -> T{tid2} Lock at {ts2:.3f}s (handoff)")
                                 break
 
+    # Synchronization evidence — detailed handoff timing on shared mutexes
+    if shared_addrs and sync_pairs:
+        lines.append("")
+        lines.append("--- Synchronization Evidence ---")
+        lines.append("Handoff = Thread A Unlock(M) followed by Thread B Lock(M)")
+        lines.append("Small gap suggests Thread B was blocked waiting for the mutex.")
+        lines.append("")
+
+        for op_name in SYNC_OPS:
+            if op_name not in sync_by_op:
+                continue
+
+            # Find a representative call that has shared mutex activity
+            best = None
+            best_handoffs = []
+            for call in sync_by_op[op_name]:
+                enter_ts, ret_ts = call["enter_ts"], call["ret_ts"]
+                handoffs = []
+                for addr in shared_addrs:
+                    evts = [(ts, tid, ev) for ts, tid, ev in mutex_by_addr[addr]["events"]
+                            if enter_ts <= ts <= ret_ts]
+                    for j in range(len(evts) - 1):
+                        ts1, tid1, ev1 = evts[j]
+                        ts2, tid2, ev2 = evts[j + 1]
+                        if "Unlock" not in ev1 or "Lock" not in ev2 or "Unlock" in ev2:
+                            continue
+                        if tid1 == tid2:
+                            continue
+                        if tid1 in callback_threads and tid2 in sync_threads:
+                            gap_us = (ts2 - ts1) * 1e6
+                            handoffs.append((addr, ts1, tid1, ts2, tid2, gap_us, "callback->sync"))
+                        elif tid1 in sync_threads and tid2 in callback_threads:
+                            gap_us = (ts2 - ts1) * 1e6
+                            handoffs.append((addr, ts1, tid1, ts2, tid2, gap_us, "sync->callback"))
+                if len(handoffs) > len(best_handoffs):
+                    best = call
+                    best_handoffs = handoffs
+
+            if not best_handoffs:
+                continue
+
+            ret_tag = "" if best["has_return"] else " (estimated)"
+            lines.append(f"{op_name} (T{best['tid']}, {best['enter_ts']:.3f}s - {best['ret_ts']:.3f}s{ret_tag}):")
+
+            cb_to_sync = [h for h in best_handoffs if h[6] == "callback->sync"]
+            sync_to_cb = [h for h in best_handoffs if h[6] == "sync->callback"]
+
+            if cb_to_sync:
+                gaps = [h[5] for h in cb_to_sync]
+                lines.append(f"  callback->sync handoffs: {len(cb_to_sync)}, "
+                             f"gap min={min(gaps):.0f}us, max={max(gaps):.0f}us, avg={sum(gaps)/len(gaps):.0f}us")
+                for addr, ts1, tid1, ts2, tid2, gap_us, _ in cb_to_sync[:5]:
+                    lines.append(f"    {addr}: T{tid1} Unlock {ts1:.6f}s -> T{tid2} Lock {ts2:.6f}s  (gap {gap_us:.0f}us)")
+                if len(cb_to_sync) > 5:
+                    lines.append(f"    ... ({len(cb_to_sync) - 5} more)")
+
+            if sync_to_cb:
+                gaps = [h[5] for h in sync_to_cb]
+                lines.append(f"  sync->callback handoffs: {len(sync_to_cb)}, "
+                             f"gap min={min(gaps):.0f}us, max={max(gaps):.0f}us, avg={sum(gaps)/len(gaps):.0f}us")
+                for addr, ts1, tid1, ts2, tid2, gap_us, _ in sync_to_cb[:5]:
+                    lines.append(f"    {addr}: T{tid1} Unlock {ts1:.6f}s -> T{tid2} Lock {ts2:.6f}s  (gap {gap_us:.0f}us)")
+                if len(sync_to_cb) > 5:
+                    lines.append(f"    ... ({len(sync_to_cb) - 5} more)")
+
+            lines.append("")
+
     # Conclusion
     if lock_count > 0:
         lines.append("")
         if shared_addrs:
-            lines.append(f"CONCLUSION: {len(shared_addrs)} mutex instance(s) shared between")
-            lines.append("callback thread(s) and sync thread(s). CoreAudio uses HALB_Mutex to")
-            lines.append("synchronize callbacks with teardown operations.")
+            lines.append(f"CONCLUSION: {len(shared_addrs)} mutex instance(s) observed on both")
+            lines.append("callback thread(s) and sync thread(s), consistent with HALB_Mutex-based")
+            lines.append("internal synchronization.")
         else:
             lines.append("CONCLUSION: Mutex activity observed but no single mutex instance was")
             lines.append("found on both callback and sync threads. Synchronization may use a")

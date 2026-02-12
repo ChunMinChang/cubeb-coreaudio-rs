@@ -1,0 +1,48 @@
+name: TSan Race Analysis
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [trailblazer, tsan-analysis]
+
+jobs:
+  analyze:
+    runs-on: macos-15
+    timeout-minutes: 360
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install Rust nightly
+      run: rustup toolchain install nightly --profile minimal --component rust-src
+
+    - name: Setup Rust
+      run: |
+        rustup default nightly
+        rustc --version
+        cargo --version
+
+    - name: Setup switchaudio
+      run: brew install switchaudio-osx
+
+    - name: Setup blackhole-2ch
+      run: |
+        brew install blackhole-2ch
+        sudo killall -9 coreaudiod
+        SwitchAudioSource -s "BlackHole 2ch" -t input
+        SwitchAudioSource -s "BlackHole 2ch" -t output
+
+    - name: Run TSan analysis
+      run: sh run_tsan_analysis.sh
+
+    - name: Upload results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: tsan-analysis
+        path: |
+          tsan-warnings.log
+          tsan-flagged-tests.txt
+          trace-*.log

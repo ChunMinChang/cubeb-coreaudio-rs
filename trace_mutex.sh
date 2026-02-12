@@ -42,7 +42,9 @@ fi
 TEST_NAME="$1"
 EXTRA_PATTERNS="${2:-}"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-LOG_FILE="trace-${TEST_NAME}-${TIMESTAMP}.log"
+# Sanitize test name for use in filename (replace :: with -)
+LOG_NAME=$(echo "${TEST_NAME}" | sed 's/::/-/g')
+LOG_FILE="trace-${LOG_NAME}-${TIMESTAMP}.log"
 
 echo "=== HALB_Mutex Trace ==="
 echo "Test: ${TEST_NAME}"
