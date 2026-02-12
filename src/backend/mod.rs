@@ -965,12 +965,12 @@ extern "C" fn audiounit_output_callback(
     }
 
     // Mixing
-    if stm.core_stream_data.mixer.is_some() {
+    if let Some(mixer) = stm.core_stream_data.mixer.as_mut() {
         assert!(
             buffers[0].mDataByteSize
                 >= stm.core_stream_data.output_dev_desc.mBytesPerFrame * output_frames
         );
-        stm.core_stream_data.mixer.as_mut().unwrap().mix(
+        mixer.mix(
             output_frames as usize,
             buffers[0].mData,
             buffers[0].mDataByteSize as usize,
