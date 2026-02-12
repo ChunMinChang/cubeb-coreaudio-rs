@@ -112,3 +112,28 @@ echo "\n\n=== TSan Analysis Complete ==="
 echo "TSan output:    tsan-warnings.log"
 echo "Flagged tests:  tsan-flagged-tests.txt (${FLAGGED_COUNT})"
 echo "Trace logs:     trace-*.log"
+
+# ==========================================================================
+# Hint: dtrace commands for local contention measurement
+# ==========================================================================
+echo "\n"
+echo "For direct contention proof, run dtrace locally. This requires sudo AND"
+echo "SIP disabled for dtrace (pid provider cannot probe Apple framework symbols"
+echo "like CoreAudio/HALB_Mutex with SIP enabled):"
+echo ""
+echo "  # One-time setup (Recovery Mode): csrutil enable --without dtrace"
+echo ""
+while IFS= read -r test_name; do
+    echo "  sudo ./trace_contention.sh ${test_name}"
+done < tsan-flagged-tests.txt
+echo ""
+echo "dtrace measures actual HALB_Mutex::Lock() duration. Long durations (>100us)"
+echo "prove the thread was blocked waiting for the mutex, which is direct evidence"
+echo "of synchronization between callback and sync threads."
+echo ""
+echo "If SIP cannot be disabled, use trace_mutex.sh (LLDB-based, no SIP changes"
+echo "needed) for shared mutex analysis instead:"
+echo ""
+while IFS= read -r test_name; do
+    echo "  ./trace_mutex.sh ${test_name}"
+done < tsan-flagged-tests.txt
