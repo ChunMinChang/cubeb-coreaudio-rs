@@ -1663,19 +1663,23 @@ fn test_add_devices_changed_listener() {
             .is_ok());
 
             if devtype.contains(DeviceType::INPUT) {
-                let cb = get_devices_changed_callback(context, Scope::Input);
-                assert_eq!(cb, Some(*callback));
+                if let Some(cb) = get_devices_changed_callback(context, Scope::Input) {
+                    assert_eq!(cb, *callback);
+                } else {
+                    panic!("Expected input callback to be set");
+                }
             } else {
-                let cb = get_devices_changed_callback(context, Scope::Input);
-                assert!(cb.is_none());
+                assert!(get_devices_changed_callback(context, Scope::Input).is_none());
             }
 
             if devtype.contains(DeviceType::OUTPUT) {
-                let cb = get_devices_changed_callback(context, Scope::Output);
-                assert_eq!(cb, Some(*callback));
+                if let Some(cb) = get_devices_changed_callback(context, Scope::Output) {
+                    assert_eq!(cb, *callback);
+                } else {
+                    panic!("Expected output callback to be set");
+                }
             } else {
-                let cb = get_devices_changed_callback(context, Scope::Output);
-                assert!(cb.is_none());
+                assert!(get_devices_changed_callback(context, Scope::Output).is_none());
             }
 
             // Unregister the callbacks within all scopes.
@@ -1744,16 +1748,16 @@ fn test_remove_devices_changed_listener() {
                 .is_ok());
             }
 
-            let input_callback = get_devices_changed_callback(context, Scope::Input);
-            assert_eq!(
-                input_callback,
-                Some(*(map.get(&DeviceType::INPUT).unwrap()))
-            );
-            let output_callback = get_devices_changed_callback(context, Scope::Output);
-            assert_eq!(
-                output_callback,
-                Some(*(map.get(&DeviceType::OUTPUT).unwrap()))
-            );
+            if let Some(input_callback) = get_devices_changed_callback(context, Scope::Input) {
+                assert_eq!(input_callback, *(map.get(&DeviceType::INPUT).unwrap()));
+            } else {
+                panic!("Expected input callback to be set");
+            }
+            if let Some(output_callback) = get_devices_changed_callback(context, Scope::Output) {
+                assert_eq!(output_callback, *(map.get(&DeviceType::OUTPUT).unwrap()));
+            } else {
+                panic!("Expected output callback to be set");
+            }
 
             // Unregister the callbacks within one specific scopes.
             assert!(run_serially(|| context.remove_devices_changed_listener(*devtype)).is_ok());
