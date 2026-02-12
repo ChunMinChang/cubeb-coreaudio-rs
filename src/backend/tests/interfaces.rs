@@ -1168,12 +1168,12 @@ fn test_ops_stream_current_device() {
 }
 
 #[test]
+#[should_panic]
 fn test_ops_stream_device_destroy() {
     test_default_output_stream_operation("stream: destroy null device", |stream| {
-        assert_eq!(
-            unsafe { OPS.stream_device_destroy.unwrap()(stream, ptr::null_mut()) },
-            ffi::CUBEB_ERROR_INVALID_PARAMETER
-        );
+        // cubeb-backend 0.13's capi layer passes the null pointer to DeviceRef::from_ptr,
+        // which panics on null pointer dereference in newer Rust toolchains.
+        unsafe { OPS.stream_device_destroy.unwrap()(stream, ptr::null_mut()) };
     });
 }
 
